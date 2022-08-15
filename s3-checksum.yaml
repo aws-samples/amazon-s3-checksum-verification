@@ -1,0 +1,369 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: Template to setup auto-generation of checksums for objects uploaded onto Amazon S3
+
+Parameters:
+  ChecksumAlgorithm:
+    Type: String
+    Default: SHA256
+    AllowedValues:
+      - CRC32
+      - CRC32C
+      - SHA1
+      - SHA256
+    Description: Select Checksum Algorithm. Default and recommended choice is SHA256, however CRC32, CRC32C, SHA1 are also available.
+  S3Bucket:
+    Type: String
+    Default: mxk-s3-checksums
+    Description: Enter the Amazon S3 bucket for setting up Checksums.
+
+Resources:
+  ChecksumLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code: 
+        ZipFile: |
+          import boto3
+          import os
+
+          s3_client = boto3.client('s3')
+          s3_resource = s3 = boto3.resource('s3')
+
+          def handler(event, context):
+
+              bucket = event['Records'][0]['s3']['bucket']['name']
+              key = event['Records'][0]['s3']['object']['key']
+              print(f"Object {key} was just uploaded in Bucket {bucket}.")
+              copy_source = {
+                  'Bucket': bucket,
+                  'Key': key
+              }
+
+              attributes = get_attributes(bucket, key)
+              
+              # Only proceed if Checksums don't already exist
+              if attributes['Checksum'] == None:
+                  print(f"Copying {key} to the same place but adding Checksum ...")
+                  try:
+                      # If using SSE-KMS
+                      if 'EncryptionKey' in attributes:
+                          s3_resource.meta.client.copy(
+                              copy_source,
+                              Bucket=bucket,
+                              Key=key,
+                              ExtraArgs={
+                                  'ChecksumAlgorithm':os.environ['Checksum'],
+                                  'StorageClass': attributes['StorageClass'],
+                                  'ServerSideEncryption': attributes['Encryption'],
+                                  'SSEKMSKeyId': attributes['EncryptionKey']
+                              }
+                          )
+                      # If using SSE-S3
+                      elif attributes['Encryption'] != None:
+                          s3_resource.meta.client.copy(
+                              copy_source,
+                              Bucket=bucket,
+                              Key=key,
+                              ExtraArgs={
+                                  'ChecksumAlgorithm':os.environ['Checksum'],
+                                  'StorageClass': attributes['StorageClass'],
+                                  'ServerSideEncryption': attributes['Encryption']
+                              }
+                          )
+                      # If not using any encryption - NOT RECOMMENDED
+                      else:
+                          print(os.environ['Checksum'])
+                          s3_resource.meta.client.copy(
+                              copy_source,
+                              Bucket=bucket,
+                              Key=key,
+                              ExtraArgs={
+                                  'ChecksumAlgorithm':os.environ['Checksum'],
+                                  'StorageClass': attributes['StorageClass']
+                              }
+                          )
+                      print(f"SUCCESS: {key} now has a {os.environ['Checksum']} Checksum ")
+                  except Exception as e:
+                      print(e)
+                      raise
+              else:
+                  print(f"{key} already has a Checksum; No further action needed!")
+              
+              return
+
+          def get_attributes(bucket, key):
+              try:
+                  attributes = {}
+                  response = s3_client.head_object(
+                  Bucket=bucket,
+                  Key=key,
+                  ChecksumMode='ENABLED'
+                  )
+                  
+                  # Check if the Object already has Checksums
+                  print(f"Checking whether {key} already has Checksum ...")
+                  if 'ChecksumCRC32' in response:
+                      attributes['Checksum'] = 'ChecksumCRC32'
+                      print(f"{key} already has a CRC32 Checksum!")
+                      return attributes
+                  elif 'ChecksumCRC32C' in response:
+                      attributes['Checksum'] = 'ChecksumCRC32C'
+                      print(f"{key} already has a CRC32C Checksum!")
+                      return attributes
+                  elif 'ChecksumSHA1' in response:
+                      attributes['Checksum'] = 'ChecksumSHA1'
+                      print(f"{key} already has a SHA1 Checksum!")
+                      return attributes
+                  elif 'ChecksumSHA256' in response:
+                      attributes['Checksum'] = 'ChecksumSHA256'
+                      print(f"{key} already has a SHA256 Checksum!")
+                      return attributes
+                  else:
+                      print(f"{key} does not have a Checksum!")
+                      attributes['Checksum'] = None
+                      
+                      print(f"Obtaining other attributes for {key} ...")
+                      #Check Object's storage class
+                      print(f"Checking Storage Class for {key} ...")
+                      if 'StorageClass' not in response:
+                          print(f"{key} is stored in S3-STANDARD.")
+                          attributes['StorageClass'] = 'STANDARD'
+                      else:
+                          storage_class = response['StorageClass']
+                          print(f"{key} is stored in {storage_class}.")
+                          attributes['StorageClass'] = response['StorageClass']
+                      
+                      # Check Object's encryption
+                      print(f"Checking Encryption for {key} ...")
+                      if 'ServerSideEncryption' not in response:
+                          print(f"{key} is not encrypted.")
+                          attributes['Encryption'] = None
+                      else:
+                          print(f"{key} is encrypted.")
+                          attributes['Encryption'] = response['ServerSideEncryption']
+                          if response['ServerSideEncryption'] == 'aws:kms':
+                              attributes['EncryptionKey'] = response['SSEKMSKeyId']
+                      
+                      return attributes
+
+              except Exception as e:
+                  print(e)
+                  raise
+      Description: Function to add Checksums to objects in Amazon S3
+      Environment:
+        Variables:
+          Checksum: !Ref ChecksumAlgorithm
+      Handler: index.handler
+      Layers:
+        - "arn:aws:lambda:eu-west-1:673897743857:layer:Boto3:2"
+      Role: !GetAtt ChecksumLambdaRole.Arn
+      Runtime: python3.9
+      Timeout: 600
+      ReservedConcurrentExecutions: 10
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W89
+            reason: "The function does not process any data but merely copies it, hence VPC configuration is not needed."
+  ChecksumLambdaRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: 'lambda.amazonaws.com'
+          Action:
+          - 'sts:AssumeRole'
+      Path: '/'
+      ManagedPolicyArns:
+      - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+      - PolicyName: S3Permissions
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Sid: S3ReadWrite
+            Effect: Allow
+            Action:
+            - s3:PutObject
+            - s3:PutObjectTagging
+            - s3:PutObjectAcl
+            - s3:GetObject
+            - s3:GetObjectVersion
+            - s3:GetObjectTagging
+            - s3:GetObjectAcl
+            - s3:GetObjectAttributes
+            - s3:GetObjectVersionAttributes
+            - s3:ListBucket
+            Resource:
+            - !Sub 'arn:aws:s3:::${S3Bucket}/*'
+      - PolicyName: KMSPermissions
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Sid: S3ReadWrite
+            Effect: Allow
+            Action:
+            - kms:Decrypt
+            - kms:Encrypt
+            - kms:GenerateDataKey
+            Resource:
+            - !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/*'
+  S3InvokeLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ChecksumLambdaFunction
+      Principal: s3.amazonaws.com
+      SourceArn: !Sub arn:aws:s3:::${S3Bucket}
+      SourceAccount: !Ref 'AWS::AccountId'
+  S3TriggerFunction:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - S3InvokeLambdaPermission
+      - ChecksumLambdaFunction
+    Properties:
+      Code: 
+        ZipFile: |
+          import boto3
+          import cfnresponse
+
+          s3_client = boto3.client('s3')
+
+          def handler(event, context):
+              
+              responseData = {}
+              
+              bucket = event['ResourceProperties']['S3Bucket']
+              lambda_fcn = event['ResourceProperties']['LambdaFunction']
+              
+              if event['RequestType'] == 'Create':
+                  print(f"Setting up event notifications for {bucket} bucket...")
+                  create_trigger(event, context, responseData, bucket, lambda_fcn)
+              elif event['RequestType'] == 'Update':
+                  if bucket == event['OldResourceProperties']['S3Bucket']:
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, 'NoActionNeeded')
+                  else:
+                      print(f"Updating event notifications for {bucket} bucket...")
+                      create_trigger(event, context, responseData, bucket, lambda_fcn)
+              else:
+                  print(f"No action needed for removing event notifications from {bucket} bucket...")
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, 'NoActionNeeded')
+
+          def create_trigger(event, context, responseData, bucket, lambda_fcn):
+
+              try:
+                  response = s3_client.put_bucket_notification_configuration(
+                      Bucket=bucket,
+                      NotificationConfiguration={
+                          'LambdaFunctionConfigurations': [
+                              {
+                                  'LambdaFunctionArn': lambda_fcn,
+                                  'Events': ['s3:ObjectCreated:*']
+                              }
+                          ]
+                      }
+                  )
+                  print(f"SUCCESS: Successfully added Lambda trigger to {bucket} Bucket.")
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, 'TriggerAdded')
+              except Exception as e:
+                  cfnresponse.send(event, context, cfnresponse.FAILED, responseData, 'NoTriggerAdded')
+                  print(e)
+                  raise
+      Description: Function to add Lambda trigger for new object upload in Amazon S3
+      Environment:
+        Variables:
+          S3Bucket: !Ref S3Bucket
+          LambdaFunction: !GetAtt ChecksumLambdaFunction.Arn
+      Handler: index.handler
+      Role: !GetAtt TriggerLambdaRole.Arn
+      Runtime: python3.9
+      Timeout: 600
+      ReservedConcurrentExecutions: 10
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W89
+            reason: "The function does not process any data but merely copies it, hence VPC configuration is not needed."
+  TriggerLambdaRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: 'lambda.amazonaws.com'
+          Action:
+          - 'sts:AssumeRole'
+      Path: '/'
+      ManagedPolicyArns:
+      - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+      - PolicyName: S3Permissions
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Sid: S3BucketNotif
+            Effect: Allow
+            Action:
+            - s3:PutBucketNotification
+            Resource:
+            - !Sub 'arn:aws:s3:::${S3Bucket}/*'
+  S3Trigger:
+    Type: Custom::S3Trigger
+    DependsOn:
+      - TriggerLambdaRole
+      - ChecksumLambdaRole
+      - S3TriggerFunction
+    Properties:
+      ServiceToken: !GetAtt S3TriggerFunction.Arn
+      S3Bucket: !Ref S3Bucket
+      LambdaFunction: !GetAtt ChecksumLambdaFunction.Arn
+  S3BatchRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: 'batchoperations.s3.amazonaws.com'
+          Action:
+          - 'sts:AssumeRole'
+      Path: '/'
+      Policies:
+      - PolicyName: S3Permissions
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Sid: S3ReadWrite
+            Effect: Allow
+            Action:
+            - s3:PutObject
+            - s3:PutObjectAcl
+            - s3:PutObjectTagging
+            - s3:GetObject
+            - s3:GetObjectVersion
+            - s3:GetObjectAcl
+            - s3:GetObjectTagging
+            - s3:ListBucket
+            - s3:InitiateReplication
+            - s3:GetReplicationConfiguration
+            - s3:PutInventoryConfiguration
+            Resource:
+            - !Sub 'arn:aws:s3:::${S3Bucket}/*'
+      - PolicyName: KMSPermissions
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Sid: S3ReadWrite
+            Effect: Allow
+            Action:
+            - kms:Decrypt
+            - kms:Encrypt
+            - kms:GenerateDataKey
+            Resource:
+            - !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/*'
