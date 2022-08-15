@@ -1,11 +1,32 @@
-## My Project
+## S3 Checksum Verification
 
-TODO: Fill this README out!
+This repo provides a simple mechanism to validate local file integrity against the checksums generated and stored by S3 with the object.
 
-Be sure to:
+1.	Clone the code from Github and enter the repo:
 
-* Change the title in this README
-* Edit your repository description on GitHub
+```
+git clone https://github.com/aws-samples/s3-checksum-verification
+cd s3-checksum-verification
+```
+
+2.	Install the python packages the script needs:
+
+```
+pip install requirements.txt
+```
+
+3.	Configure AWS cli credentials following this guide.
+4.	Run the following command to check file integrity
+
+```
+./integrity-check.py  --bucketName <your bucketname> --objectName <folder/objectname-in-s3> --localFileName <local file name>
+```
+
+5.	You should see a confirmation confirming the data matches e.g.
+
+```
+PASS: Checksum match! - s3Checksum: GgECtUetQSLtGNuZ+FEqrbkJ3712Afvx63E2pzpMKnk= | localChecksum: GgECtUetQSLtGNuZ+FEqrbkJ3712Afvx63E2pzpMKnk=
+```
 
 ## Security
 
