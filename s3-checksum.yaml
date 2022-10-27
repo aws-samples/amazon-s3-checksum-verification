@@ -154,8 +154,6 @@ Resources:
         Variables:
           Checksum: !Ref ChecksumAlgorithm
       Handler: index.handler
-      Layers:
-        - "arn:aws:lambda:eu-west-1:673897743857:layer:Boto3:2"
       Role: !GetAtt ChecksumLambdaRole.Arn
       Runtime: python3.9
       Timeout: 600
