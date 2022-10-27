@@ -55,82 +55,113 @@ def localChecksumValidation(objectSummary):
 
 def crcChecksums(objectSummary):
 
-    partOneSize = objectSummary['ObjectParts']['Parts'][0]['Size']
     checksumAlgo = whichChecksum(objectSummary)
 
-    CHUNK_SIZE = partOneSize
-    file_number = 1
-    partHashListBase64 = []
+    if 'ObjectParts' in objectSummary:
+        partOneSize = objectSummary['ObjectParts']['Parts'][0]['Size']
 
-    with open(args.localFileName, "rb") as f:
-        chunk = f.read(CHUNK_SIZE)
+        CHUNK_SIZE = partOneSize
+        file_number = 1
+        partHashListBase64 = []
 
-        if checksumAlgo == 'ChecksumCRC32':
-            while chunk:
-                checksum = 0
-                m = zlib.crc32(chunk, checksum)
+        with open(args.localFileName, "rb") as f:
+            chunk = f.read(CHUNK_SIZE)
+
+            if checksumAlgo == 'ChecksumCRC32':
+                while chunk:
+                    checksum = 0
+                    m = zlib.crc32(chunk, checksum)
+                    m = m.to_bytes((m.bit_length() + 7) // 8, 'big') or b'\0'
+
+                    # To print out individual part hashes comment the following line
+                    # print(base64.b64encode(m))
+
+                    partHashListBase64.append(m)
+                    file_number += 1
+                    chunk = f.read(CHUNK_SIZE)
+
+                concatStr = b''.join(partHashListBase64)
+                m = zlib.crc32(concatStr, checksum)
                 m = m.to_bytes((m.bit_length() + 7) // 8, 'big') or b'\0'
 
-                # To print out individual part hashes comment the following line
-                # print(base64.b64encode(m))
+            if checksumAlgo == 'ChecksumCRC32C':
 
-                partHashListBase64.append(m)
-                file_number += 1
-                chunk = f.read(CHUNK_SIZE)
+                while chunk:
+                    checksum = 0
+                    m = crc32c.crc32c(chunk)
+                    m = m.to_bytes((m.bit_length() + 7) // 8, 'big') or b'\0'
 
-            concatStr = b''.join(partHashListBase64)
-            m = zlib.crc32(concatStr, checksum)
-            m = m.to_bytes((m.bit_length() + 7) // 8, 'big') or b'\0'
+                    # To print out individual part hashes comment the following line
+                    # print(base64.b64encode(m))
 
-        if checksumAlgo == 'ChecksumCRC32C':
+                    partHashListBase64.append(m)
+                    file_number += 1
+                    chunk = f.read(CHUNK_SIZE)
 
-            while chunk:
-                checksum = 0
-                m = crc32c.crc32c(chunk)
+                concatStr = b''.join(partHashListBase64)
+                m = crc32c.crc32c(concatStr)
                 m = m.to_bytes((m.bit_length() + 7) // 8, 'big') or b'\0'
 
-                # To print out individual part hashes comment the following line
-                # print(base64.b64encode(m))
+        return base64.b64encode(m).decode('utf-8')
+    else:
+        with open(args.localFileName, "rb") as f:
+            fileData = f.read()
 
-                partHashListBase64.append(m)
-                file_number += 1
-                chunk = f.read(CHUNK_SIZE)
+            if checksumAlgo == 'ChecksumCRC32':
+                checksum = 0
+                m = zlib.crc32(fileData, checksum)
+                m = m.to_bytes((m.bit_length() + 7) // 8, 'big') or b'\0'
 
-            concatStr = b''.join(partHashListBase64)
-            m = crc32c.crc32c(concatStr)
-            m = m.to_bytes((m.bit_length() + 7) // 8, 'big') or b'\0'
+                return base64.b64encode(m).decode('utf-8')
 
-    return base64.b64encode(m).decode('utf-8')
+            if checksumAlgo == 'ChecksumCRC32C':
+
+                checksum = 0
+                m = crc32c.crc32c(fileData)
+                m = m.to_bytes((m.bit_length() + 7) // 8, 'big') or b'\0'
+
+                return base64.b64encode(m).decode('utf-8')
 
 def shaChecksums(objectSummary):
 
-    partOneSize = objectSummary['ObjectParts']['Parts'][0]['Size']
     checksumAlgo = whichChecksum(objectSummary)
 
-    CHUNK_SIZE = partOneSize
-    file_number = 1
-    partHashListBase64 = []
+    if 'ObjectParts' in objectSummary:
+        partOneSize = objectSummary['ObjectParts']['Parts'][0]['Size']
+
+        CHUNK_SIZE = partOneSize
+        file_number = 1
+        partHashListBase64 = []
+        
+        with open(args.localFileName, "rb") as f:
+            chunk = f.read(CHUNK_SIZE)
+            while chunk:
+                if checksumAlgo == 'ChecksumSHA256':
+                    m = hashlib.sha256()
+                if checksumAlgo == 'ChecksumSHA1':
+                    m = hashlib.sha1()
+                m.update(chunk)
+                partHashListBase64.append(base64.b64encode(m.digest()))
+                file_number += 1
+                chunk = f.read(CHUNK_SIZE)
+        
+        if checksumAlgo == 'ChecksumSHA256':
+            m = hashlib.sha256()
+        if checksumAlgo == 'ChecksumSHA1':
+            m = hashlib.sha1()
+        for line in partHashListBase64:
+            m.update(base64.b64decode(line))
     
-    with open(args.localFileName, "rb") as f:
-        chunk = f.read(CHUNK_SIZE)
-        while chunk:
+        return base64.b64encode(m.digest()).decode('utf-8')
+    else:
+        with open(args.localFileName, "rb") as f:
+            fileData = f.read()
             if checksumAlgo == 'ChecksumSHA256':
                 m = hashlib.sha256()
             if checksumAlgo == 'ChecksumSHA1':
                 m = hashlib.sha1()
-            m.update(chunk)
-            partHashListBase64.append(base64.b64encode(m.digest()))
-            file_number += 1
-            chunk = f.read(CHUNK_SIZE)
-    
-    if checksumAlgo == 'ChecksumSHA256':
-        m = hashlib.sha256()
-    if checksumAlgo == 'ChecksumSHA1':
-        m = hashlib.sha1()
-    for line in partHashListBase64:
-        m.update(base64.b64decode(line))
-    
-    return base64.b64encode(m.digest()).decode('utf-8')
+            m.update(fileData)
+        return base64.b64encode(m.digest()).decode('utf-8')
 
 def s3checksumResult(objectSummary):
 
