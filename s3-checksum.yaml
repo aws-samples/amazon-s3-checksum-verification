@@ -14,7 +14,6 @@ Parameters:
     Description: Select Checksum Algorithm. Default and recommended choice is SHA256, however CRC32, CRC32C, SHA1 are also available.
   S3Bucket:
     Type: String
-    Default: mxk-s3-checksums
     Description: Enter the Amazon S3 bucket for setting up Checksums.
 
 Resources:
@@ -256,3 +255,8 @@ Resources:
             - kms:GenerateDataKey
             Resource:
             - !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/*'
+
+Outputs:
+  LambdaFunctionName:
+    Description: Name of the AWS Lambda Function that was created by this template.
+    Value: !Ref ChecksumLambdaFunction
