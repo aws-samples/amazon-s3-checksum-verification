@@ -157,6 +157,8 @@ Resources:
       Role: !GetAtt ChecksumLambdaRole.Arn
       Runtime: python3.9
       Timeout: 600
+      Layers:
+        - !Sub 'arn:aws:lambda:${AWS::Region}:055466705599:layer:Boto3:1'
       ReservedConcurrentExecutions: 10
     Metadata:
       cfn_nag:
