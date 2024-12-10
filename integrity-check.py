@@ -59,7 +59,6 @@ def crcChecksums(objectSummary):
 
     if 'ObjectParts' in objectSummary:
         partOneSize = objectSummary['ObjectParts']['Parts'][0]['Size']
-
         CHUNK_SIZE = partOneSize
         file_number = 1
         partHashListBase64 = []
@@ -71,8 +70,10 @@ def crcChecksums(objectSummary):
                 while chunk:
                     checksum = 0
                     m = zlib.crc32(chunk, checksum)
-                    m = m.to_bytes((m.bit_length() + 7) // 8, 'big') or b'\0'
-
+                    # Ensure consistent 4-byte representation
+                    m = m & 0xFFFFFFFF  # Handle negative values
+                    m = m.to_bytes(4, 'big')  # Always use 4 bytes, CRC32 is a 32-bit/4-byte hash
+                    
                     # To print out individual part hashes comment the following line
                     # print(base64.b64encode(m))
 
@@ -82,7 +83,8 @@ def crcChecksums(objectSummary):
 
                 concatStr = b''.join(partHashListBase64)
                 m = zlib.crc32(concatStr, checksum)
-                m = m.to_bytes((m.bit_length() + 7) // 8, 'big') or b'\0'
+                m = m & 0xFFFFFFFF  # Handle negative values
+                m = m.to_bytes(4, 'big')  # Always use 4 bytes, CRC32 is a 32-bit/4-byte hash
 
             if checksumAlgo == 'ChecksumCRC32C':
 
